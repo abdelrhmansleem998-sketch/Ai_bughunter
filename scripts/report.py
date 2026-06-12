@@ -19,25 +19,31 @@ if not new_findings:
     print("[*] No new findings to report today.")
     exit(0)
 
-# قراءة تحليل الذكاء الاصطناعي
 try:
     with open("reports/latest_report.md", "r") as f:
         ai_report = f.read()
 except FileNotFoundError:
     ai_report = "AI Report missing."
 
-# بناء رسالة الديسكورد (Embed)
+# إذا لم يقم الذكاء الاصطناعي بالرد، نكتفي بالثغرات
+if ai_report == "NO_NEW_FINDINGS":
+    exit(0)
+
+# تجهيز الإشعار المرسل لـ Discord
 embed = {
-    "title": "🚨 BugHunter AI: New Vulnerabilities Detected!",
-    "color": 16711680, # لون أحمر للإنذار
-    "description": f"**Found {len(new_findings)} New Vulnerability(ies)**\n\n**🤖 AI Triage & Analysis:**\n{ai_report[:1500]}", # قص النص إذا كان طويلاً جداً
-    "footer": {"text": "Automated Recon & Scan Pipeline"}
+    "title": "🚨 AI BugHunter: New Vulnerabilities Detected!",
+    "color": 16711680, 
+    "description": f"**Found {len(new_findings)} New Vulnerability(ies)**\n\n**🤖 Groq AI Triage & Analysis:**\n\n{ai_report[:2000]}", 
+    "footer": {"text": "Automated Bug Bounty Pipeline • github.com/projectdiscovery"}
 }
 
 data = {"embeds": [embed]}
 
-response = requests.post(webhook_url, json=data)
-if response.status_code in [200, 204]:
-    print("[+] Successfully sent alert to Discord!")
-else:
-    print(f"[-] Failed to send to Discord. Status: {response.status_code}")
+try:
+    response = requests.post(webhook_url, json=data)
+    if response.status_code in [200, 204]:
+        print("[+] Successfully sent alert to Discord!")
+    else:
+        print(f"[-] Failed to send to Discord. Status: {response.status_code}")
+except Exception as e:
+    print(f"[-] Error connecting to Discord Webhook: {e}")
