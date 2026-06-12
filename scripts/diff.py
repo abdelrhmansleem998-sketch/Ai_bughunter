@@ -2,8 +2,9 @@ import json
 import sqlite3
 import hashlib
 import os
+from datetime import datetime
 
-print("[*] Running Diff & SQLite State Management...")
+print("[*] Running State Management (v2)...")
 
 db_path = "data/findings.db"
 os.makedirs("data", exist_ok=True)
@@ -16,7 +17,9 @@ CREATE TABLE IF NOT EXISTS findings (
     host TEXT,
     name TEXT,
     severity TEXT,
-    date_found TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    template_id TEXT,
+    matched_at TEXT,
+    first_seen TIMESTAMP
 )
 """)
 
@@ -25,38 +28,35 @@ new_findings = []
 if os.path.exists("data/nuclei_output.json"):
     with open("data/nuclei_output.json", "r") as f:
         for line in f:
-            if not line.strip():
-                continue
+            if not line.strip(): continue
             try:
                 finding = json.loads(line.strip())
-                host = finding.get("host", "unknown_host")
-                name = finding.get("info", {}).get("name", "unknown_vuln")
+                host = finding.get("host", "unknown")
+                name = finding.get("info", {}).get("name", "unknown")
                 severity = finding.get("info", {}).get("severity", "info")
+                template_id = finding.get("template-id", "unknown")
+                matched_at = finding.get("matched-at", host)
                 
-                # إنشاء البصمة الفريدة
-                raw = f"{host}:{name}:{severity}"
+                # البصمة الاحترافية (لا تتداخل فيها الثغرات)
+                raw = f"{host}:{template_id}:{severity}:{matched_at}"
                 hash_val = hashlib.sha256(raw.encode()).hexdigest()
                 
-                # البحث في قاعدة البيانات
                 cur.execute("SELECT hash FROM findings WHERE hash = ?", (hash_val,))
                 if not cur.fetchone():
-                    # إدراج الثغرة الجديدة في قاعدة البيانات
-                    cur.execute("INSERT INTO findings (hash, host, name, severity) VALUES (?, ?, ?, ?)", 
-                                (hash_val, host, name, severity))
+                    now = datetime.now().isoformat()
+                    cur.execute("INSERT INTO findings VALUES (?, ?, ?, ?, ?, ?, ?)", 
+                                (hash_val, host, name, severity, template_id, matched_at, now))
+                    
                     new_findings.append({
-                        "host": host,
-                        "name": name,
-                        "severity": severity.upper(),
-                        "url": finding.get("matched-at", host),
-                        "description": finding.get("info", {}).get("description", "No description provided.")
+                        "host": host, "name": name, "severity": severity.upper(),
+                        "url": matched_at, "template": template_id
                     })
-            except Exception as e:
+            except Exception:
                 pass
 
 conn.commit()
 conn.close()
 
-# حفظ الثغرات الجديدة في ملف منفصل
 with open("data/new_findings.json", "w") as f:
     json.dump(new_findings, f, indent=4)
 
