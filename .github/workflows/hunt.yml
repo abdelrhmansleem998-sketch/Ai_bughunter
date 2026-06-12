@@ -2,75 +2,74 @@ name: AI BugHunter Pipeline
 
 on:
   schedule:
-    - cron: '0 2 * * *' # يعمل تلقائياً كل يوم الساعة 2 صباحاً بتوقيت UTC
-  workflow_dispatch: # زر التشغيل اليدوي من GitHub
+    - cron: '0 2 * * *'
+  workflow_dispatch:
 
 jobs:
   hunt:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write # ضروري لعمل Commit لقاعدة البيانات
 
     steps:
-    - name: Checkout Repository
+    - name: 1. Checkout Main Code (Public)
+      uses: actions/checkout@v4
+
+    - name: 2. Checkout Private Data (The Vault)
       uses: actions/checkout@v4
       with:
-        token: ${{ secrets.GITHUB_TOKEN }}
+        repository: abdelrhmansleem998-sketch/bughunter-data # ⚠️ تأكد إن ده اسم المستودع السري بتاعك
+        token: ${{ secrets.DATA_PAT }}
+        path: vault # هيحط الداتا كلها في فولدر اسمه vault
 
-    - name: Set up Go
+    - name: Set up Go & Python
       uses: actions/setup-go@v5
       with:
         go-version: '1.21'
-
-    - name: Set up Python
-      uses: actions/setup-python@v5
+    - uses: actions/setup-python@v5
       with:
         python-version: '3.10'
 
-    - name: Install System Dependencies & Scanning Tools
+    - name: Install System Dependencies & Tools
       run: |
         sudo apt-get update
         sudo apt-get install -y jq whois dnsutils
-        # تثبيت أدوات الفحص
         go install -v github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest
         go install -v github.com/projectdiscovery/httpx/cmd/httpx@latest
         go install -v github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest
         go install -v github.com/projectdiscovery/tlsx/cmd/tlsx@latest
         go install -v github.com/tomnomnom/waybackurls@latest
         go install -v github.com/lc/subjs@latest
-        # تحديث قوالب Nuclei
         ~/go/bin/nuclei -update-templates
+        pip install -r requirements.txt
 
-    - name: Install Python Requirements
-      run: pip install -r requirements.txt
+    - name: Prepare Data Folders
+      run: |
+        # نسخ الأهداف والداتابيز من الخزنة لبيئة العمل
+        cp vault/targets.txt .
+        mkdir -p data
+        cp vault/findings.db data/ || true
 
-    - name: 1. Run Advanced Recon
-      run: python scripts/recon.py
+    - name: Run Recon & Scan Pipeline
       env:
         PATH: ${{ env.PATH }}:/home/runner/go/bin
+      run: |
+        python scripts/recon.py
+        python scripts/scan.py
+        python scripts/diff.py
 
-    - name: 2. Run Comprehensive Scan
-      run: python scripts/scan.py
-      env:
-        PATH: ${{ env.PATH }}:/home/runner/go/bin
-
-    - name: 3. Diff & SQLite State Management
-      run: python scripts/diff.py
-
-    - name: 4. AI Triage & Analysis (Groq)
+    - name: Run AI Analysis & Discord Report
       env:
         GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
-      run: python scripts/analyze.py
-
-    - name: 5. Report to Discord
-      env:
         DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
-      run: python scripts/report.py
-
-    - name: Commit and Push State (Database & History)
       run: |
-        git config --global user.name "github-actions[bot]"
-        git config --global user.email "github-actions[bot]@users.noreply.github.com"
-        git add data/findings.db
-        git add data/dns_whois.txt
-        git diff --quiet && git diff --staged --quiet || (git commit -m "chore: auto-update findings database and recon data" && git push)
+        python scripts/analyze.py
+        python scripts/report.py
+
+    - name: Save Data back to Private Vault
+      run: |
+        # إرجاع الداتابيز المحدثة للخزنة السرية
+        cp data/findings.db vault/
+        cd vault
+        git config --global user.name "BugHunter Bot"
+        git config --global user.email "bot@bughunter.local"
+        git add findings.db
+        git diff --quiet && git diff --staged --quiet || (git commit -m "Auto-update findings database" && git push)
