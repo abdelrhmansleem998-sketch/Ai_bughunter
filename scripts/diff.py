@@ -8,7 +8,6 @@ print("[*] Running Diff & SQLite State Management...")
 db_path = "data/findings.db"
 os.makedirs("data", exist_ok=True)
 
-# الاتصال بقاعدة البيانات وإنشاء الجدول إذا لم يكن موجوداً
 conn = sqlite3.connect(db_path)
 cur = conn.cursor()
 cur.execute("""
@@ -26,11 +25,13 @@ new_findings = []
 if os.path.exists("data/nuclei_output.json"):
     with open("data/nuclei_output.json", "r") as f:
         for line in f:
+            if not line.strip():
+                continue
             try:
                 finding = json.loads(line.strip())
-                host = finding.get("host", "")
-                name = finding.get("info", {}).get("name", "")
-                severity = finding.get("info", {}).get("severity", "")
+                host = finding.get("host", "unknown_host")
+                name = finding.get("info", {}).get("name", "unknown_vuln")
+                severity = finding.get("info", {}).get("severity", "info")
                 
                 # إنشاء البصمة الفريدة
                 raw = f"{host}:{name}:{severity}"
@@ -39,14 +40,15 @@ if os.path.exists("data/nuclei_output.json"):
                 # البحث في قاعدة البيانات
                 cur.execute("SELECT hash FROM findings WHERE hash = ?", (hash_val,))
                 if not cur.fetchone():
-                    # ثغرة جديدة! إضافتها لقاعدة البيانات
+                    # إدراج الثغرة الجديدة في قاعدة البيانات
                     cur.execute("INSERT INTO findings (hash, host, name, severity) VALUES (?, ?, ?, ?)", 
                                 (hash_val, host, name, severity))
                     new_findings.append({
                         "host": host,
                         "name": name,
                         "severity": severity.upper(),
-                        "url": finding.get("matched-at", host)
+                        "url": finding.get("matched-at", host),
+                        "description": finding.get("info", {}).get("description", "No description provided.")
                     })
             except Exception as e:
                 pass
@@ -54,7 +56,7 @@ if os.path.exists("data/nuclei_output.json"):
 conn.commit()
 conn.close()
 
-# حفظ الثغرات الجديدة في ملف منفصل ليقرأه الـ AI
+# حفظ الثغرات الجديدة في ملف منفصل
 with open("data/new_findings.json", "w") as f:
     json.dump(new_findings, f, indent=4)
 
