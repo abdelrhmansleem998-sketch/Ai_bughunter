@@ -2,12 +2,10 @@ import os
 import json
 import requests
 
-print("[*] Preparing Discord Report...")
+print("[*] Preparing Discord Report (v2)...")
 
 webhook_url = os.environ.get("DISCORD_WEBHOOK_URL")
-if not webhook_url:
-    print("[-] DISCORD_WEBHOOK_URL not found in secrets.")
-    exit(1)
+if not webhook_url: exit(1)
 
 try:
     with open("data/new_findings.json", "r") as f:
@@ -15,35 +13,27 @@ try:
 except FileNotFoundError:
     new_findings = []
 
-if not new_findings:
-    print("[*] No new findings to report today.")
-    exit(0)
+if not new_findings: exit(0)
 
 try:
     with open("reports/latest_report.md", "r") as f:
         ai_report = f.read()
 except FileNotFoundError:
-    ai_report = "AI Report missing."
+    ai_report = ""
 
-# إذا لم يقم الذكاء الاصطناعي بالرد، نكتفي بالثغرات
-if ai_report == "NO_NEW_FINDINGS":
-    exit(0)
+if ai_report == "NO_NEW_FINDINGS": exit(0)
 
-# تجهيز الإشعار المرسل لـ Discord
+# اقتطاع التقرير لـ 1800 حرف كحد أقصى لتجنب قيود ديسكورد
+safe_ai_report = ai_report[:1800] + ("..." if len(ai_report) > 1800 else "")
+
 embed = {
-    "title": "🚨 AI BugHunter: New Vulnerabilities Detected!",
+    "title": "🚨 AI BugHunter: New Vulnerabilities!",
     "color": 16711680, 
-    "description": f"**Found {len(new_findings)} New Vulnerability(ies)**\n\n**🤖 Groq AI Triage & Analysis:**\n\n{ai_report[:2000]}", 
-    "footer": {"text": "Automated Bug Bounty Pipeline • github.com/projectdiscovery"}
+    "description": f"**Found {len(new_findings)} New Vulnerability(ies)**\n\n**🤖 AI Analysis:**\n{safe_ai_report}", 
 }
 
-data = {"embeds": [embed]}
-
 try:
-    response = requests.post(webhook_url, json=data)
-    if response.status_code in [200, 204]:
-        print("[+] Successfully sent alert to Discord!")
-    else:
-        print(f"[-] Failed to send to Discord. Status: {response.status_code}")
+    requests.post(webhook_url, json={"embeds": [embed]})
+    print("[+] Discord alert sent!")
 except Exception as e:
-    print(f"[-] Error connecting to Discord Webhook: {e}")
+    print(f"[-] Discord error: {e}")
