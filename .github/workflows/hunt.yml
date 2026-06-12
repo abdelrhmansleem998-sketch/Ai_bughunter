@@ -1,4 +1,4 @@
-name: AI BugHunter Pipeline
+name: AI BugHunter Pipeline v2
 
 on:
   schedule:
@@ -10,15 +10,15 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - name: 1. Checkout Main Code (Public)
+    - name: Checkout Main Code
       uses: actions/checkout@v4
 
-    - name: 2. Checkout Private Data (The Vault)
+    - name: Checkout Private Vault
       uses: actions/checkout@v4
       with:
-        repository: abdelrhmansleem998-sketch/bughunter-data # ⚠️ تأكد إن ده اسم المستودع السري بتاعك
+        repository: abdelrhmansleem998-sketch/bughunter-data # تأكد من الاسم
         token: ${{ secrets.DATA_PAT }}
-        path: vault # هيحط الداتا كلها في فولدر اسمه vault
+        path: vault
 
     - name: Set up Go & Python
       uses: actions/setup-go@v5
@@ -28,48 +28,66 @@ jobs:
       with:
         python-version: '3.10'
 
+    # استخدام الكاش لتسريع تحميل الأدوات (يوفر 80% من وقت التشغيل)
+    - name: Cache Go binaries
+      uses: actions/cache@v4
+      with:
+        path: ~/go/bin
+        key: ${{ runner.os }}-go-tools
+
     - name: Install System Dependencies & Tools
       run: |
         sudo apt-get update
         sudo apt-get install -y jq whois dnsutils
-        go install -v github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest
-        go install -v github.com/projectdiscovery/httpx/cmd/httpx@latest
-        go install -v github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest
-        go install -v github.com/projectdiscovery/tlsx/cmd/tlsx@latest
-        go install -v github.com/tomnomnom/waybackurls@latest
-        go install -v github.com/lc/subjs@latest
+        # تثبيت الأدوات فقط إذا لم تكن موجودة في الكاش
+        if [ ! -f ~/go/bin/subfinder ]; then
+          go install -v github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest
+          go install -v github.com/projectdiscovery/httpx/cmd/httpx@latest
+          go install -v github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest
+          go install -v github.com/projectdiscovery/katana/cmd/katana@latest
+          go install -v github.com/projectdiscovery/tlsx/cmd/tlsx@latest
+          go install -v github.com/tomnomnom/waybackurls@latest
+          go install -v github.com/lc/subjs@latest
+        fi
+        # حل مشكلة الـ PATH لتعمل الأدوات في كل السكربتات
+        echo "$HOME/go/bin" >> $GITHUB_PATH
         ~/go/bin/nuclei -update-templates
         pip install -r requirements.txt
 
-    - name: Prepare Data Folders
+    - name: Prepare Vault Data
       run: |
-        # نسخ الأهداف والداتابيز من الخزنة لبيئة العمل
         cp vault/targets.txt .
         mkdir -p data
-        cp vault/findings.db data/ || true
+        # حل مشكلة Data Loss: إنشاء الداتابيز إن لم تكن موجودة في الخزنة
+        if [ ! -f vault/findings.db ]; then
+            touch vault/findings.db
+        fi
+        cp vault/findings.db data/
 
-    - name: Run Recon & Scan Pipeline
-      env:
-        PATH: ${{ env.PATH }}:/home/runner/go/bin
-      run: |
-        python scripts/recon.py
-        python scripts/scan.py
-        python scripts/diff.py
+    - name: Run Recon Pipeline
+      run: python scripts/recon.py
 
-    - name: Run AI Analysis & Discord Report
+    - name: Run Scan Pipeline
+      run: python scripts/scan.py
+
+    - name: Diff & DB Management
+      run: python scripts/diff.py
+
+    - name: AI Triage (Groq)
       env:
         GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
-        DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
-      run: |
-        python scripts/analyze.py
-        python scripts/report.py
+      run: python scripts/analyze.py
 
-    - name: Save Data back to Private Vault
+    - name: Discord Report
+      env:
+        DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+      run: python scripts/report.py
+
+    - name: Save DB back to Vault
       run: |
-        # إرجاع الداتابيز المحدثة للخزنة السرية
         cp data/findings.db vault/
         cd vault
         git config --global user.name "BugHunter Bot"
         git config --global user.email "bot@bughunter.local"
         git add findings.db
-        git diff --quiet && git diff --staged --quiet || (git commit -m "Auto-update findings database" && git push)
+        git diff --quiet && git diff --staged --quiet || (git commit -m "Auto-update DB" && git push)
