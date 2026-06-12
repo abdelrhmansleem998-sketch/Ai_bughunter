@@ -2,14 +2,14 @@ name: AI BugHunter Pipeline
 
 on:
   schedule:
-    - cron: '0 2 * * *' # يعمل يومياً الساعة 2 صباحاً بتوقيت UTC
-  workflow_dispatch: # زر التشغيل اليدوي
+    - cron: '0 2 * * *' # يعمل تلقائياً كل يوم الساعة 2 صباحاً بتوقيت UTC
+  workflow_dispatch: # زر التشغيل اليدوي من GitHub
 
 jobs:
   hunt:
     runs-on: ubuntu-latest
     permissions:
-      contents: write # ضروري جداً لعمل Commit لقاعدة البيانات
+      contents: write # ضروري لعمل Commit لقاعدة البيانات
 
     steps:
     - name: Checkout Repository
@@ -30,28 +30,31 @@ jobs:
     - name: Install System Dependencies & Scanning Tools
       run: |
         sudo apt-get update
-        sudo apt-get install -y jq
+        sudo apt-get install -y jq whois dnsutils
         # تثبيت أدوات الفحص
         go install -v github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest
         go install -v github.com/projectdiscovery/httpx/cmd/httpx@latest
         go install -v github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest
-        # تحديث Nuclei Templates
+        go install -v github.com/projectdiscovery/tlsx/cmd/tlsx@latest
+        go install -v github.com/tomnomnom/waybackurls@latest
+        go install -v github.com/lc/subjs@latest
+        # تحديث قوالب Nuclei
         ~/go/bin/nuclei -update-templates
 
     - name: Install Python Requirements
       run: pip install -r requirements.txt
 
-    - name: 1. Run Recon (Subfinder + Httpx)
+    - name: 1. Run Advanced Recon
       run: python scripts/recon.py
       env:
         PATH: ${{ env.PATH }}:/home/runner/go/bin
 
-    - name: 2. Run Vulnerability Scan (Nuclei)
+    - name: 2. Run Comprehensive Scan
       run: python scripts/scan.py
       env:
         PATH: ${{ env.PATH }}:/home/runner/go/bin
 
-    - name: 3. State Management (Diff & SQLite)
+    - name: 3. Diff & SQLite State Management
       run: python scripts/diff.py
 
     - name: 4. AI Triage & Analysis (Groq)
@@ -64,10 +67,10 @@ jobs:
         DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
       run: python scripts/report.py
 
-    - name: Commit and Push Database (Save State)
+    - name: Commit and Push State (Database & History)
       run: |
         git config --global user.name "github-actions[bot]"
         git config --global user.email "github-actions[bot]@users.noreply.github.com"
         git add data/findings.db
-        # إذا لم يكن هناك تغيير في قاعدة البيانات، لا تفعل شيء
-        git diff --quiet && git diff --staged --quiet || (git commit -m "chore: auto-update findings database" && git push)
+        git add data/dns_whois.txt
+        git diff --quiet && git diff --staged --quiet || (git commit -m "chore: auto-update findings database and recon data" && git push)
