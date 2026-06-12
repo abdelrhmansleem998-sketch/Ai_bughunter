@@ -1,1 +1,73 @@
+name: AI BugHunter Pipeline
 
+on:
+  schedule:
+    - cron: '0 2 * * *' # يعمل يومياً الساعة 2 صباحاً بتوقيت UTC
+  workflow_dispatch: # زر التشغيل اليدوي
+
+jobs:
+  hunt:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # ضروري جداً لعمل Commit لقاعدة البيانات
+
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.21'
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.10'
+
+    - name: Install System Dependencies & Scanning Tools
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y jq
+        # تثبيت أدوات الفحص
+        go install -v github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest
+        go install -v github.com/projectdiscovery/httpx/cmd/httpx@latest
+        go install -v github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest
+        # تحديث Nuclei Templates
+        ~/go/bin/nuclei -update-templates
+
+    - name: Install Python Requirements
+      run: pip install -r requirements.txt
+
+    - name: 1. Run Recon (Subfinder + Httpx)
+      run: python scripts/recon.py
+      env:
+        PATH: ${{ env.PATH }}:/home/runner/go/bin
+
+    - name: 2. Run Vulnerability Scan (Nuclei)
+      run: python scripts/scan.py
+      env:
+        PATH: ${{ env.PATH }}:/home/runner/go/bin
+
+    - name: 3. State Management (Diff & SQLite)
+      run: python scripts/diff.py
+
+    - name: 4. AI Triage & Analysis (Groq)
+      env:
+        GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+      run: python scripts/analyze.py
+
+    - name: 5. Report to Discord
+      env:
+        DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+      run: python scripts/report.py
+
+    - name: Commit and Push Database (Save State)
+      run: |
+        git config --global user.name "github-actions[bot]"
+        git config --global user.email "github-actions[bot]@users.noreply.github.com"
+        git add data/findings.db
+        # إذا لم يكن هناك تغيير في قاعدة البيانات، لا تفعل شيء
+        git diff --quiet && git diff --staged --quiet || (git commit -m "chore: auto-update findings database" && git push)
